@@ -1,0 +1,363 @@
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.List;
+import java.util.StringTokenizer;
+
+import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.joda.time.DateTime;
+
+import com.amazonaws.ClientConfiguration;
+import com.amazonaws.ResponseMetadata;
+import com.amazonaws.auth.BasicAWSCredentials;
+import com.amazonaws.metrics.RequestMetricCollector;
+import com.amazonaws.retry.RetryPolicy;
+import com.amazonaws.services.cloudwatch.AmazonCloudWatch;
+import com.amazonaws.services.cloudwatch.AmazonCloudWatchClient;
+import com.amazonaws.services.cloudwatch.model.Datapoint;
+import com.amazonaws.services.cloudwatch.model.Dimension;
+import com.amazonaws.services.cloudwatch.model.GetMetricStatisticsRequest;
+import com.amazonaws.services.cloudwatch.model.GetMetricStatisticsResult;
+import com.amazonaws.services.rds.AmazonRDS;
+import com.amazonaws.services.rds.AmazonRDSClient;
+import com.amazonaws.services.rds.model.DBInstance;
+import com.amazonaws.services.rds.model.DescribeDBInstancesRequest;
+import com.amazonaws.services.rds.model.DescribeDBInstancesResult;
+import com.amazonaws.services.rds.model.DescribeDBLogFilesRequest;
+import com.amazonaws.services.rds.model.DescribeDBLogFilesResult;
+import com.amazonaws.services.rds.model.DescribeDBSnapshotsRequest;
+import com.amazonaws.services.rds.model.DescribeDBSnapshotsResult;
+import com.google.gson.Gson;
+import java.io.*;
+
+public class Init {
+
+	public static void main(String args[])throws IOException
+	{
+		BufferedReader buf = new BufferedReader(new InputStreamReader(System.in));
+		//AmazonRDS rds;
+		ClientConfiguration clientConfiguration = new ClientConfiguration();
+		clientConfiguration.setMaxErrorRetry(25);
+		clientConfiguration.setRetryPolicy(new RetryPolicy(null, null, 25, true));
+		String csv = "D:/Users/ashusaho/Desktop/RDSKeys.csv";
+		String line = "";
+	    String splitBy = ",";
+	    String[] data = new String[2];
+	    
+	    
+		buf= new BufferedReader(new FileReader(csv));
+		while((line=buf.readLine())!=null)
+		{
+			data= line.split(splitBy);
+			String AccessKey="",SecretAccessKey="",client="",region="";
+			client = data[0];
+			AccessKey=data[1];
+			SecretAccessKey=data[2];
+			region = data[3];
+		BasicAWSCredentials credentials = new BasicAWSCredentials(AccessKey,SecretAccessKey);
+		
+		int days = 30;				//Change this before running the program.
+		
+		AmazonRDS rds = new AmazonRDSClient(credentials);
+		rds.setEndpoint("rds."+region+".amazonaws.com");
+		
+		DescribeDBInstancesRequest request = new DescribeDBInstancesRequest();
+		DescribeDBInstancesResult result = rds.describeDBInstances();
+		String resource = result.getDBInstances().toString();
+		StringTokenizer st = new StringTokenizer(resource,"{ } [ ] , :");
+		List<String> instances = new ArrayList<String>();
+		while(st.hasMoreTokens())
+		{
+			String currentValue = st.nextToken();
+			if(currentValue.equals("DBInstanceIdentifier"))
+				instances.add(st.nextToken());
+				
+		}
+		
+		Workbook wb = new XSSFWorkbook();
+		FileOutputStream fileOut = new FileOutputStream("D:/Users/ashusaho/Desktop/Rds Reports/"+client+".xlsx");
+		Sheet sheet= null;
+		Row r=null;
+		Cell cell=null;
+		
+		for(int i=0;i<instances.size();i++)
+		{
+			List<String> CpuUsage =new ArrayList<String>();
+			List<String> CpuTime =new ArrayList<String>();
+			List<String> MemoryUsage =new ArrayList<String>();
+			List<String> MemoryTime =new ArrayList<String>();
+			List<String> StorageUsage =new ArrayList<String>();
+			List<String> StorageTime =new ArrayList<String>();
+			String server = instances.get(i);
+			
+		//snapshot data
+		DescribeDBSnapshotsRequest request1 = new DescribeDBSnapshotsRequest().withDBInstanceIdentifier(server);
+		DescribeDBSnapshotsResult result1 = rds.describeDBSnapshots(request1);
+		
+		String snapshot = result1.toString();
+		Sheet sh= null;
+		Row row=null;
+		Cell cellS=null;
+		sh=wb.createSheet("Snapshot("+server+")");
+		row = sh.createRow(0);
+		cellS = row.createCell(0);
+		cellS.setCellValue("Snapshot Identifier");
+		cellS = row.createCell(1);
+		cellS.setCellValue("Creation Time");
+		cellS = row.createCell(2);
+		cellS.setCellValue("Status");
+		cellS = row.createCell(3);
+		cellS.setCellValue("Progress(%)");
+		cellS = row.createCell(4);
+		cellS.setCellValue("Type");
+		int flag=1;
+		StringTokenizer snap=new StringTokenizer(snapshot, "{ } [ ] , :");
+		int rnum=1;
+		while(snap.hasMoreTokens())
+		{
+			String currentToken = snap.nextToken();
+			if(flag==1)
+			{
+				row=sh.createRow(rnum);
+				rnum++;
+				flag=0;
+			}
+			if(currentToken.equals("DBSnapshotIdentifier"))
+			{
+				cellS = row.createCell(0);
+				cellS.setCellValue(snap.nextToken()+" "+snap.nextToken());
+			}
+			if(currentToken.equals("SnapshotCreateTime"))
+			{
+				cellS = row.createCell(1);
+				cellS.setCellValue(snap.nextToken()+" "+snap.nextToken()+" "+snap.nextToken()+" "+snap.nextToken()+":"+snap.nextToken()+":"+snap.nextToken()+" "+snap.nextToken()+" "+snap.nextToken());
+			}
+			if(currentToken.equals("Status"))
+			{
+				cellS = row.createCell(2);
+				cellS.setCellValue(snap.nextToken());
+			}
+			if(currentToken.equals("PercentProgress"))
+			{
+				cellS = row.createCell(3);
+				cellS.setCellValue(snap.nextToken());
+			}
+			if(currentToken.equals("StorageType"))
+			{
+				cellS = row.createCell(4);
+				cellS.setCellValue(snap.nextToken());
+				flag=1;
+			}
+		}
+		//snapshot data ends here
+		
+		
+	    String start = "01",end="06"; 
+		//cloudwatch monitoring
+			
+		for(int j=0;j<=5;j++)
+		{
+	     
+		Calendar tt = javax.xml.bind.DatatypeConverter.parseDateTime("2018-09-"+start+"T12:00:00Z");
+		Calendar tt1 = javax.xml.bind.DatatypeConverter.parseDateTime("2018-09-"+end+"T12:00:00Z");
+		System.out.println(start+"  "+end);
+		int start1 = Integer.parseInt(start);
+		int end1 = Integer.parseInt(end);
+		start1+=5;
+		if(start1==26)
+		{
+			
+			if(days==30)
+				end1+=4;
+			else if(days<30)
+				end1+=2;
+			else if(days>30)
+				end1+=5;
+		}
+		else if(end1!=30 || end1!=31)
+			end1+=5;
+		start = Integer.toString(start1);
+		start="0"+start;
+		end = Integer.toString(end1);
+		end = "0"+end;
+		
+		Date sTime=tt.getTime();
+		Date eTime=tt1.getTime();
+	AmazonCloudWatch watch = new AmazonCloudWatchClient(credentials);
+	watch.setEndpoint("monitoring."+region+".amazonaws.com");
+	GetMetricStatisticsRequest req = new GetMetricStatisticsRequest().withStartTime(sTime)
+																	.withNamespace("AWS/RDS")
+																	.withPeriod(300)
+																	.withDimensions(new Dimension().withName("DBInstanceIdentifier").withValue(server))
+																	.withMetricName("CPUUtilization")
+																	.withStatistics("Maximum")
+																	.withEndTime(eTime);
+																	
+	GetMetricStatisticsResult res = watch.getMetricStatistics(req);
+	String c = res.toString();
+
+	GetMetricStatisticsRequest req1 = new GetMetricStatisticsRequest().withStartTime(sTime)
+																		.withNamespace("AWS/RDS")
+																		.withPeriod(300)
+																		.withDimensions(new Dimension().withName("DBInstanceIdentifier").withValue(server))
+																		.withMetricName("FreeStorageSpace")
+																		.withStatistics("Maximum")
+																		.withEndTime(eTime);
+	GetMetricStatisticsResult res1 = watch.getMetricStatistics(req1);
+	String s = res1.toString();
+	GetMetricStatisticsRequest req2 = new GetMetricStatisticsRequest().withStartTime(sTime)
+																		.withNamespace("AWS/RDS")
+																		.withPeriod(300)
+																		.withDimensions(new Dimension().withName("DBInstanceIdentifier").withValue(server))
+																		.withMetricName("FreeableMemory")
+																		.withStatistics("Maximum")
+																		.withEndTime(eTime);
+
+	GetMetricStatisticsResult res2 = watch.getMetricStatistics(req2);
+	String m = res2.toString();
+
+	//System.out.println(c);
+
+
+
+
+
+	String time="",value="";
+	StringTokenizer str=new StringTokenizer(c, "{ } [ ] , :");
+
+	if(c.length()>40)
+	while(str.hasMoreTokens())
+	{
+		
+		String currentToken = str.nextToken();
+		if(currentToken.equals("Timestamp"))
+			 {
+			   time = str.nextToken()+" "+str.nextToken()+" "+str.nextToken()+" "+str.nextToken()+":"+str.nextToken()+":"+str.nextToken()+" "+str.nextToken()+" "+str.nextToken();
+			   
+				CpuTime.add(time);
+			 }
+		//if(str.hasMoreTokens()==true)
+		//{
+	    String next = str.nextToken();
+		if(next.equals("Maximum"))
+		{
+			value = str.nextToken();
+		CpuUsage.add(value);
+		}
+		//}
+	   // System.out.println(time+"                     "+value);
+	}
+
+	StringTokenizer str1=new StringTokenizer(s, "{ } [ ] , :");
+	if(s.length()>45)
+	while(str1.hasMoreTokens())
+	{
+		
+		String currentToken = str1.nextToken();
+		if(currentToken.equals("Timestamp"))
+		{
+			time = str1.nextToken()+" "+str1.nextToken()+" "+str1.nextToken()+" "+str1.nextToken()+":"+str1.nextToken()+":"+str1.nextToken()+" "+str1.nextToken()+" "+str1.nextToken();
+			StorageTime.add(time);
+		}
+		//if(str.hasMoreTokens()==true)
+		//{
+	    String next = str1.nextToken();
+		if(next.equals("Maximum"))
+		{	
+		value = str1.nextToken();
+		StorageUsage.add(value);
+		}
+		//}
+	    //System.out.println(time+"                     "+value);
+	}
+
+
+	StringTokenizer str2=new StringTokenizer(m, "{ } [ ] , :");
+	if(m.length()>40)
+	while(str2.hasMoreTokens())
+	{
+		
+		String currentToken = str2.nextToken();
+		if(currentToken.equals("Timestamp"))
+		{
+			time = str2.nextToken()+" "+str2.nextToken()+" "+str2.nextToken()+" "+str2.nextToken()+":"+str2.nextToken()+":"+str2.nextToken()+" "+str2.nextToken()+" "+str2.nextToken();
+			MemoryTime.add(time);
+		}
+		//if(str.hasMoreTokens()==true)
+		//{
+	    String next = str2.nextToken();
+		if(next.equals("Maximum"))
+		{
+			value = str2.nextToken();
+		MemoryUsage.add(value);
+		}
+		//}
+	    //System.out.println(time+"                     "+value);
+	}
+
+
+	  }
+		sheet=wb.createSheet("CPU("+server+")");
+		r=sheet.createRow(0);
+		int rownum=1;
+		cell= r.createCell(0);
+		cell.setCellValue("Time Stamp");
+		cell=r.createCell(1);
+		cell.setCellValue("Maximum(%)");
+		for(int k=0;k<CpuTime.size();k++)
+		{
+			r=sheet.createRow(rownum);
+			cell= r.createCell(0);
+			cell.setCellValue(CpuTime.get(k));
+			cell=r.createCell(1);
+			cell.setCellValue(CpuUsage.get(k));
+			rownum++;
+		}
+
+		sheet=wb.createSheet("Storage("+server+")");
+		r=sheet.createRow(0);
+		 rownum=1;
+		cell= r.createCell(0);
+		cell.setCellValue("Time Stamp");
+		cell=r.createCell(1);
+		cell.setCellValue("Maximum(Bytes)");
+		for(int k=0;k<StorageTime.size();k++)
+		{
+			r=sheet.createRow(rownum);
+			cell= r.createCell(0);
+			cell.setCellValue(StorageTime.get(k));
+			cell=r.createCell(1);
+			cell.setCellValue(StorageUsage.get(k));
+			rownum++;
+		}
+		
+		sheet=wb.createSheet("Memory("+server+")");
+		r=sheet.createRow(0);
+		 rownum=1;
+		cell= r.createCell(0);
+		cell.setCellValue("Time Stamp");
+		cell=r.createCell(1);
+		cell.setCellValue("Maximum(Bytes)");
+		for(int k=0;k<MemoryTime.size();k++)
+		{
+			r=sheet.createRow(rownum);
+			cell= r.createCell(0);
+			cell.setCellValue(MemoryTime.get(k));
+			cell=r.createCell(1);
+			cell.setCellValue(MemoryUsage.get(k));
+			rownum++;
+		}
+		
+		
+	}
+		wb.write(fileOut);
+		fileOut.close();
+	}
+	}
+}
